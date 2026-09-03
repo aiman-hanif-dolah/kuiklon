@@ -32,7 +32,6 @@ class KTheme {
       useMaterial3: true,
       colorScheme: base,
       scaffoldBackgroundColor: KColors.inkBg,
-      splashFactory: InkSparkle.splashFactory,
       visualDensity: VisualDensity.compact,
       fontFamily: 'SpaceGrotesk',
       textTheme: const TextTheme(

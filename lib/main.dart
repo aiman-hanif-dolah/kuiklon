@@ -10,6 +10,7 @@ import 'theme.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
+  await windowManager.setPreventClose(true);
   const opts = WindowOptions(
     title: 'Kuiklon',
     minimumSize: Size(860, 560),
