@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:system_tray/system_tray.dart';
 import 'package:window_manager/window_manager.dart';
 import 'git_service.dart';
 import 'theme.dart';
@@ -45,9 +46,11 @@ class HomePage extends StatefulWidget {
 
 enum AppPhase { idle, busy, done, error }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WindowListener {
   final _urlCtrl = TextEditingController();
   final _urlFocus = FocusNode();
+  final _tray = SystemTray();
+  final _appWindow = AppWindow();
   AppPhase _phase = AppPhase.idle;
   String _statusLine = '';
   String _output = '';
@@ -58,8 +61,45 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    windowManager.addListener(this);
     HardwareKeyboard.instance.addHandler(_onKey);
     _urlCtrl.addListener(_onUrlChanged);
+    _initTray();
+  }
+
+  Future<void> _initTray() async {
+    await _tray.initSystemTray(
+      iconPath: 'assets/kuiklon_tray.ico',
+      toolTip: 'Kuiklon — quick clone',
+    );
+    final menu = Menu()
+      ..buildFrom([
+        MenuItemLabel(
+            label: 'Show Kuiklon', onClicked: (_) => _appWindow.show()),
+        MenuSeparator(),
+        MenuItemLabel(
+            label: 'Open C:/IdeaProjects',
+            onClicked: (_) async =>
+                await Process.run('explorer.exe', [GitService.projectsRoot])),
+        MenuSeparator(),
+        MenuItemLabel(label: 'Quit Kuiklon', onClicked: (_) async {
+          await _tray.destroy();
+          await windowManager.destroy();
+        }),
+      ]);
+    await _tray.setContextMenu(menu);
+    _tray.registerSystemTrayEventHandler((eventName) {
+      if (eventName == kSystemTrayEventClick) {
+        _appWindow.show();
+      } else if (eventName == kSystemTrayEventRightClick) {
+        _tray.popUpContextMenu();
+      }
+    });
+  }
+
+  @override
+  void onWindowClose() async {
+    await _appWindow.hide();
   }
 
   bool _onKey(KeyEvent e) {
@@ -177,10 +217,12 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    windowManager.removeListener(this);
     HardwareKeyboard.instance.removeHandler(_onKey);
     _urlCtrl.dispose();
     _urlFocus.dispose();
     _debounce?.cancel();
+    _tray.destroy();
     super.dispose();
   }
 
@@ -224,14 +266,7 @@ class _HomePageState extends State<HomePage> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Container(
-          width: 10,
-          height: 40,
-          decoration: BoxDecoration(
-            color: KColors.lime,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
+        Image.asset('assets/kuiklon_logo.png', width: 44, height: 44),
         const SizedBox(width: 14),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -443,7 +478,7 @@ class _HomePageState extends State<HomePage> {
   Widget _footer() {
     return Row(
       children: [
-        Text('enter ⏎ runs the action',
+        Text('enter ⏎ runs · close ✕ hides to tray',
             style: Theme.of(context).textTheme.labelSmall),
         const Spacer(),
         TextButton(
