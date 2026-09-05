@@ -41,23 +41,29 @@ class GitService {
     final m = RegExp(r'github\.com[/:]([\w.-]+)/([\w.-]+)').firstMatch(s);
     if (m != null) {
       raw = m.group(2);
-    } else if (s.endsWith('.git')) {
+    } else if (RegExp(r'\.git$', caseSensitive: false).hasMatch(s)) {
       // Non-github git URLs / local paths: last path segment.
       raw = s.split(RegExp(r'[\\/]')).last;
     }
     if (raw == null) return null;
-    if (raw.endsWith('.git') && raw.length > 4) {
-      raw = raw.substring(0, raw.length - 4);
+    // The .git suffix is case-insensitive on git hosts (Repo.GIT).
+    final gitSuffix = RegExp(r'\.git$', caseSensitive: false).firstMatch(raw);
+    if (gitSuffix != null && raw.length > 4) {
+      raw = raw.substring(0, gitSuffix.start);
     }
     // The name becomes a folder under projectsRoot, so restrict it to a safe
-    // single path segment (no traversal, no separators, no leading dots).
-    if (raw.isEmpty || raw.startsWith('.')) return null;
+    // single path segment: no traversal, no separators, no leading dots, and
+    // no trailing dots (Windows cannot create a folder named "x.").
+    if (raw.isEmpty || raw.startsWith('.') || raw.endsWith('.')) {
+      return null;
+    }
     if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]*$').hasMatch(raw)) return null;
     return raw;
   }
 
-  static String repoPath(String repoName) =>
-      Platform.pathSeparator == '\\' ? '$projectsRoot\\$repoName' : '$projectsRoot/$repoName';
+  static String repoPath(String repoName) => Platform.pathSeparator == '\\'
+      ? '$projectsRoot\\$repoName'
+      : '$projectsRoot/$repoName';
 
   static bool repoExists(String repoName) =>
       Directory(repoPath(repoName)).existsSync();
@@ -68,14 +74,21 @@ class GitService {
   }
 
   static Future<GitResult> _run(
-      String workingDir, List<String> args, OpType type,
-      {void Function(String line)? onLine}) async {
+    String workingDir,
+    List<String> args,
+    OpType type, {
+    void Function(String line)? onLine,
+  }) async {
     final handle = GitProcessHandle();
     _active = handle;
     final buf = <String>[];
     try {
-      final proc = await Process.start('git', args,
-          workingDirectory: workingDir, environment: _gitEnv());
+      final proc = await Process.start(
+        'git',
+        args,
+        workingDirectory: workingDir,
+        environment: _gitEnv(),
+      );
       handle._process = proc;
       if (handle.cancelled) proc.kill();
       void emit(String line) {
@@ -101,8 +114,11 @@ class GitService {
         return GitResult(false, 'Cancelled', buf.join('\n'));
       }
       final ok = code == 0;
-      return GitResult(ok, _resultMessage(type, ok, code, buf),
-          buf.join('\n').trim());
+      return GitResult(
+        ok,
+        _resultMessage(type, ok, code, buf),
+        buf.join('\n').trim(),
+      );
     } catch (e) {
       return GitResult(false, 'Failed to run git', e.toString());
     } finally {
@@ -115,19 +131,26 @@ class GitService {
   static Map<String, String> _gitEnv() => {'GIT_TERMINAL_PROMPT': '0'};
 
   static String _resultMessage(
-      OpType type, bool ok, int code, List<String> buf) {
+    OpType type,
+    bool ok,
+    int code,
+    List<String> buf,
+  ) {
     if (!ok) return 'git ${type.name} failed (exit $code)';
     return switch (type) {
       OpType.clone => 'Cloned successfully',
-      OpType.pull => buf.any((l) => l.contains('Already up to date'))
-          ? 'Already up to date'
-          : 'Pulled successfully',
+      OpType.pull =>
+        buf.any((l) => l.contains('Already up to date'))
+            ? 'Already up to date'
+            : 'Pulled successfully',
       OpType.push => 'Pushed successfully',
     };
   }
 
-  static Future<GitResult> clone(String url,
-      {void Function(String line)? onLine}) async {
+  static Future<GitResult> clone(
+    String url, {
+    void Function(String line)? onLine,
+  }) async {
     final name = extractRepoName(url);
     if (name == null) {
       return GitResult(false, 'Not a valid GitHub URL', '');
@@ -137,26 +160,34 @@ class GitService {
     }
     ensureProjectsRoot();
     // '--' so a pasted string can never be parsed as a git option.
-    return _run(projectsRoot, ['clone', '--', url.trim()], OpType.clone,
-        onLine: onLine);
+    return _run(
+      projectsRoot,
+      ['clone', '--', url.trim()],
+      OpType.clone,
+      onLine: onLine,
+    );
   }
 
-  static Future<GitResult> pull(String repoName,
-          {void Function(String line)? onLine}) =>
-      _run(repoPath(repoName), ['pull'], OpType.pull, onLine: onLine);
+  static Future<GitResult> pull(
+    String repoName, {
+    void Function(String line)? onLine,
+  }) => _run(repoPath(repoName), ['pull'], OpType.pull, onLine: onLine);
 
-  static Future<GitResult> push(String repoName,
-          {void Function(String line)? onLine}) =>
-      _run(repoPath(repoName), ['push'], OpType.push, onLine: onLine);
+  static Future<GitResult> push(
+    String repoName, {
+    void Function(String line)? onLine,
+  }) => _run(repoPath(repoName), ['push'], OpType.push, onLine: onLine);
 
   static Future<bool> isDirty(String repoName) async {
     try {
-      final p = await Process.run('git', ['status', '--porcelain'],
-          workingDirectory: repoPath(repoName),
-          stdoutEncoding: utf8,
-          environment: _gitEnv());
-      return p.exitCode == 0 &&
-          (p.stdout as String).trim().isNotEmpty;
+      final p = await Process.run(
+        'git',
+        ['status', '--porcelain'],
+        workingDirectory: repoPath(repoName),
+        stdoutEncoding: utf8,
+        environment: _gitEnv(),
+      );
+      return p.exitCode == 0 && (p.stdout as String).trim().isNotEmpty;
     } catch (_) {
       return false;
     }
@@ -164,10 +195,13 @@ class GitService {
 
   static Future<bool> isAhead(String repoName) async {
     try {
-      final p = await Process.run('git', ['rev-list', '--count', '@{u}..HEAD'],
-          workingDirectory: repoPath(repoName),
-          stdoutEncoding: utf8,
-          environment: _gitEnv());
+      final p = await Process.run(
+        'git',
+        ['rev-list', '--count', '@{u}..HEAD'],
+        workingDirectory: repoPath(repoName),
+        stdoutEncoding: utf8,
+        environment: _gitEnv(),
+      );
       final n = int.tryParse((p.stdout as String).trim());
       return p.exitCode == 0 && n != null && n > 0;
     } catch (_) {

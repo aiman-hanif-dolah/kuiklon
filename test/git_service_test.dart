@@ -7,36 +7,69 @@ import 'package:kuiklon/git_service.dart';
 void main() {
   group('extractRepoName', () {
     test('parses standard github urls', () {
-      expect(GitService.extractRepoName('https://github.com/user/some-repo.git'),
-          'some-repo');
-      expect(GitService.extractRepoName('git@github.com:user/repo.git'), 'repo');
+      expect(
+        GitService.extractRepoName('https://github.com/user/some-repo.git'),
+        'some-repo',
+      );
+      expect(
+        GitService.extractRepoName('git@github.com:user/repo.git'),
+        'repo',
+      );
       expect(GitService.extractRepoName('https://github.com/a/b/'), 'b');
       expect(GitService.extractRepoName('https://github.com/a/b'), 'b');
-      expect(GitService.extractRepoName('https://github.com/a/b?tab=readme'),
-          'b');
-      expect(GitService.extractRepoName(' ssh://git@github.com/u/repo.git '),
-          'repo');
+      expect(
+        GitService.extractRepoName('https://github.com/a/b?tab=readme'),
+        'b',
+      );
+      expect(
+        GitService.extractRepoName(' ssh://git@github.com/u/repo.git '),
+        'repo',
+      );
     });
 
     test('parses deep github links to the repo name', () {
       expect(
-          GitService.extractRepoName(
-              'https://github.com/user/repo/tree/main'), 'repo');
+        GitService.extractRepoName('https://github.com/user/repo/tree/main'),
+        'repo',
+      );
       expect(
-          GitService.extractRepoName(
-              'https://github.com/user/repo/blob/main/lib/main.dart'),
-          'repo');
+        GitService.extractRepoName(
+          'https://github.com/user/repo/blob/main/lib/main.dart',
+        ),
+        'repo',
+      );
       expect(
-          GitService.extractRepoName(
-              'https://github.com/user/repo/pull/12'), 'repo');
+        GitService.extractRepoName('https://github.com/user/repo/pull/12'),
+        'repo',
+      );
     });
 
     test('falls back to last path segment for non-github .git urls', () {
-      expect(GitService.extractRepoName('https://gitlab.com/u/repo.git'),
-          'repo');
-      expect(GitService.extractRepoName(r'C:\code\my-project.git'),
-          'my-project');
+      expect(
+        GitService.extractRepoName('https://gitlab.com/u/repo.git'),
+        'repo',
+      );
+      expect(
+        GitService.extractRepoName(r'C:\code\my-project.git'),
+        'my-project',
+      );
       expect(GitService.extractRepoName('/srv/git/team/thing.git'), 'thing');
+    });
+
+    test('strips the .git suffix case-insensitively', () {
+      expect(
+        GitService.extractRepoName('https://github.com/u/Repo.GIT'),
+        'Repo',
+      );
+      expect(GitService.extractRepoName(r'C:\code\REPO.GIT'), 'REPO');
+    });
+
+    test('rejects names Windows cannot use as folders', () {
+      // A folder named "x." is impossible on Windows: Directory('x.')
+      // silently creates 'x', breaking exists/clone symmetry.
+      expect(GitService.extractRepoName('https://github.com/u/repo.'), null);
+      expect(GitService.extractRepoName('https://github.com/u/..git'), null);
+      expect(GitService.extractRepoName(r'C:\code\x..git'), null);
     });
 
     test('rejects unsafe or unusable names', () {
@@ -73,10 +106,18 @@ void main() {
     });
 
     Future<void> git(String cwd, List<String> args) async {
-      final r = await Process.run('git', args,
-          workingDirectory: cwd, stdoutEncoding: utf8, stderrEncoding: utf8);
-      expect(r.exitCode, 0,
-          reason: 'git $args failed:\n${r.stdout}\n${r.stderr}');
+      final r = await Process.run(
+        'git',
+        args,
+        workingDirectory: cwd,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      expect(
+        r.exitCode,
+        0,
+        reason: 'git $args failed:\n${r.stdout}\n${r.stderr}',
+      );
     }
 
     test('clone creates the repo in projectsRoot', () async {
@@ -85,8 +126,15 @@ void main() {
       final seed = '${tmp.path}/seed';
       await File('$seed/a.txt').writeAsString('one');
       await git(seed, ['add', '.']);
-      await git(seed, ['-c', 'user.name=t', '-c', 'user.email=t@t',
-        'commit', '-m', 'one']);
+      await git(seed, [
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-m',
+        'one',
+      ]);
       await git(tmp.path, ['init', '--bare', 'origin.git']);
       await git(seed, ['push', '../origin.git', 'HEAD']);
 
@@ -112,8 +160,15 @@ void main() {
       expect(await GitService.isDirty('origin'), isFalse);
       await File('$clonePath/a.txt').writeAsString('changed');
       expect(await GitService.isDirty('origin'), isTrue);
-      await git(clonePath, ['-c', 'user.name=t', '-c', 'user.email=t@t',
-        'commit', '-am', 'dirty']);
+      await git(clonePath, [
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-am',
+        'dirty',
+      ]);
     });
 
     test('isAhead is true before push and false after', () async {
@@ -128,27 +183,37 @@ void main() {
       await git(tmp.path, ['clone', 'origin.git', 'second']);
       await File('$second/b.txt').writeAsString('two');
       await git(second, ['add', '.']);
-      await git(second, ['-c', 'user.name=t', '-c', 'user.email=t@t',
-        'commit', '-m', 'two']);
+      await git(second, [
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-m',
+        'two',
+      ]);
       await git(second, ['push']);
 
       final res = await GitService.pull('origin');
       expect(res.success, isTrue, reason: res.output);
       expect(
-          await File('${GitService.repoPath("origin")}/b.txt').exists(), isTrue);
+        await File('${GitService.repoPath("origin")}/b.txt').exists(),
+        isTrue,
+      );
     });
 
     test('streamed run emits output lines', () async {
       await git(tmp.path, ['init', '--bare', 'stream.git']);
       final lines = <String>[];
-      final res =
-          await GitService.clone('${tmp.path}/stream.git', onLine: lines.add);
+      final res = await GitService.clone(
+        '${tmp.path}/stream.git',
+        onLine: lines.add,
+      );
       expect(res.success, isTrue, reason: res.output);
       expect(lines, isNotEmpty);
     });
 
-    test('clone into a missing projectsRoot creates it and succeeds',
-        () async {
+    test('clone into a missing projectsRoot creates it and succeeds', () async {
       final fresh = '${tmp.path}/fresh-root';
       GitService.projectsRoot = fresh;
       final res = await GitService.clone('${tmp.path}/origin.git');

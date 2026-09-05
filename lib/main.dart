@@ -65,6 +65,12 @@ class _HomePageState extends State<HomePage> with WindowListener {
   final List<String> _outLines = [];
   Timer? _debounce;
 
+  /// Platform channels are unavailable under `flutter test`; the tray is
+  /// skipped there so tests stay hermetic.
+  static final bool _isTestEnv = Platform.environment.containsKey(
+    'FLUTTER_TEST',
+  );
+
   static const int _maxConsoleLines = 400;
 
   @override
@@ -73,7 +79,7 @@ class _HomePageState extends State<HomePage> with WindowListener {
     windowManager.addListener(this);
     HardwareKeyboard.instance.addHandler(_onKey);
     _urlCtrl.addListener(_onUrlChanged);
-    _initTray();
+    if (!_isTestEnv) _initTray();
   }
 
   Future<void> _initTray() async {
@@ -85,19 +91,25 @@ class _HomePageState extends State<HomePage> with WindowListener {
       final menu = Menu()
         ..buildFrom([
           MenuItemLabel(
-              label: 'Show Kuiklon', onClicked: (_) => _appWindow.show()),
+            label: 'Show Kuiklon',
+            onClicked: (_) => _appWindow.show(),
+          ),
           MenuSeparator(),
           MenuItemLabel(
-              label: 'Open C:/IdeaProjects',
-              onClicked: (_) async {
-                GitService.ensureProjectsRoot();
-                await Process.run('explorer.exe', [GitService.projectsRoot]);
-              }),
+            label: 'Open C:/IdeaProjects',
+            onClicked: (_) async {
+              GitService.ensureProjectsRoot();
+              await Process.run('explorer.exe', [GitService.projectsRoot]);
+            },
+          ),
           MenuSeparator(),
-          MenuItemLabel(label: 'Quit Kuiklon', onClicked: (_) async {
-            await _tray.destroy();
-            await windowManager.destroy();
-          }),
+          MenuItemLabel(
+            label: 'Quit Kuiklon',
+            onClicked: (_) async {
+              await _tray.destroy();
+              await windowManager.destroy();
+            },
+          ),
         ]);
       await _tray.setContextMenu(menu);
       _tray.registerSystemTrayEventHandler((eventName) {
@@ -224,10 +236,12 @@ class _HomePageState extends State<HomePage> with WindowListener {
         if (dirty || ahead) {
           _appendLine('─ push ─');
           final pushRes = await GitService.push(name, onLine: _appendLine);
-          _finish(pushRes,
-              statusLine: pushRes.success
-                  ? 'pulled ✓ → pushed ✓'
-                  : 'pulled ✓ → push: ${pushRes.message}');
+          _finish(
+            pushRes,
+            statusLine: pushRes.success
+                ? 'pulled ✓ → pushed ✓'
+                : 'pulled ✓ → push: ${pushRes.message}',
+          );
         } else {
           _finish(res);
         }
@@ -256,8 +270,9 @@ class _HomePageState extends State<HomePage> with WindowListener {
     final name = _detectedName;
     final openRepo = name != null && GitService.repoExists(name);
     GitService.ensureProjectsRoot();
-    Process.run('explorer.exe',
-        [openRepo ? GitService.repoPath(name) : GitService.projectsRoot]);
+    Process.run('explorer.exe', [
+      openRepo ? GitService.repoPath(name) : GitService.projectsRoot,
+    ]);
   }
 
   @override
@@ -275,7 +290,8 @@ class _HomePageState extends State<HomePage> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    final exists = _detectedName != null && GitService.repoExists(_detectedName!);
+    final exists =
+        _detectedName != null && GitService.repoExists(_detectedName!);
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -310,22 +326,30 @@ class _HomePageState extends State<HomePage> with WindowListener {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Image.asset('assets/kuiklon_logo.png',
-            width: 44, height: 44, semanticLabel: 'Kuiklon logo'),
+        Image.asset(
+          'assets/kuiklon_logo.png',
+          width: 44,
+          height: 44,
+          semanticLabel: 'Kuiklon logo',
+        ),
         const SizedBox(width: 14),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Kuiklon',
-                style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.8)),
-            Text('fast clone · pull · push',
-                style: Theme.of(context)
-                    .textTheme
-                    .labelMedium
-                    ?.copyWith(color: KColors.textSecondary)),
+            const Text(
+              'Kuiklon',
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.8,
+              ),
+            ),
+            Text(
+              'fast clone · pull · push',
+              style: Theme.of(
+                context,
+              ).textTheme.labelMedium?.copyWith(color: KColors.textSecondary),
+            ),
           ],
         ),
         const Spacer(),
@@ -343,17 +367,19 @@ class _HomePageState extends State<HomePage> with WindowListener {
         color: warm
             ? KColors.warm.withValues(alpha: 0.12)
             : KColors.inkElevated,
-        border: Border.all(
-            color: warm ? KColors.warmDeep : KColors.inkBorder),
+        border: Border.all(color: warm ? KColors.warmDeep : KColors.inkBorder),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Text(text,
-          style: TextStyle(
-              fontFamily: 'JetBrainsMono',
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.6,
-              color: warm ? KColors.warm : KColors.textSecondary)),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontFamily: 'JetBrainsMono',
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.6,
+          color: warm ? KColors.warm : KColors.textSecondary,
+        ),
+      ),
     );
   }
 
@@ -368,8 +394,7 @@ class _HomePageState extends State<HomePage> with WindowListener {
             focusNode: _urlFocus,
             enabled: !busy,
             autofocus: true,
-            style: const TextStyle(
-                fontFamily: 'JetBrainsMono', fontSize: 15),
+            style: const TextStyle(fontFamily: 'JetBrainsMono', fontSize: 15),
             decoration: InputDecoration(
               hintText: 'https://github.com/user/repo.git',
               prefixIcon: const Padding(
@@ -382,14 +407,18 @@ class _HomePageState extends State<HomePage> with WindowListener {
                       padding: const EdgeInsets.only(right: 12),
                       child: Center(
                         widthFactor: 1,
-                        child: Text(
-                          _detectedName!,
-                          style: TextStyle(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 180),
+                          child: Text(
+                            _detectedName!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
                               fontFamily: 'JetBrainsMono',
                               fontSize: 12,
-                              color: exists
-                                  ? KColors.warm
-                                  : KColors.lime),
+                              color: exists ? KColors.warm : KColors.lime,
+                            ),
+                          ),
                         ),
                       ),
                     )
@@ -407,10 +436,14 @@ class _HomePageState extends State<HomePage> with WindowListener {
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2.2, color: Color(0xFF0C0C10)))
+                      strokeWidth: 2.2,
+                      color: Color(0xFF0C0C10),
+                    ),
+                  )
                 : Icon(
                     exists ? Icons.sync_rounded : Icons.download_rounded,
-                    size: 18),
+                    size: 18,
+                  ),
             label: Text(busy ? 'working' : (exists ? 'sync' : 'clone')),
           ),
         ),
@@ -436,7 +469,8 @@ class _HomePageState extends State<HomePage> with WindowListener {
       AppPhase.done => KColors.lime,
       AppPhase.error => KColors.red,
     };
-    final canManual = _detectedName != null &&
+    final canManual =
+        _detectedName != null &&
         GitService.repoExists(_detectedName!) &&
         _phase != AppPhase.busy;
     return Row(
@@ -444,32 +478,34 @@ class _HomePageState extends State<HomePage> with WindowListener {
         Container(
           width: 7,
           height: 7,
-          decoration:
-              BoxDecoration(color: color, shape: BoxShape.circle),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             _statusLine.isEmpty ? 'awaiting input —' : _statusLine,
             style: TextStyle(
-                fontFamily: 'JetBrainsMono',
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: color),
+              fontFamily: 'JetBrainsMono',
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: color,
+            ),
             overflow: TextOverflow.ellipsis,
           ),
         ),
         if (canManual) ...[
           const SizedBox(width: 10),
           OutlinedButton.icon(
-              onPressed: () => _manual(OpType.pull),
-              icon: const Icon(Icons.refresh, size: 15),
-              label: const Text('pull')),
+            onPressed: () => _manual(OpType.pull),
+            icon: const Icon(Icons.refresh, size: 15),
+            label: const Text('pull'),
+          ),
           const SizedBox(width: 8),
           OutlinedButton.icon(
-              onPressed: () => _manual(OpType.push),
-              icon: const Icon(Icons.upload_rounded, size: 15),
-              label: const Text('push')),
+            onPressed: () => _manual(OpType.push),
+            icon: const Icon(Icons.upload_rounded, size: 15),
+            label: const Text('push'),
+          ),
         ],
       ],
     );
@@ -491,21 +527,27 @@ class _HomePageState extends State<HomePage> with WindowListener {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
             child: Row(
               children: [
-                Text('\$ git',
-                    style: TextStyle(
-                        fontFamily: 'JetBrainsMono',
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: KColors.lime)),
+                Text(
+                  '\$ git',
+                  style: TextStyle(
+                    fontFamily: 'JetBrainsMono',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: KColors.lime,
+                  ),
+                ),
                 const SizedBox(width: 8),
-                Text('output',
-                    style: Theme.of(context)
-                        .textTheme
-                        .labelSmall
-                        ?.copyWith(letterSpacing: 2)),
+                Text(
+                  'output',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(letterSpacing: 2),
+                ),
                 const Spacer(),
-                Text('kuiklon v1.2',
-                    style: Theme.of(context).textTheme.labelSmall),
+                Text(
+                  'kuiklon v1.2',
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
               ],
             ),
           ),
@@ -521,12 +563,13 @@ class _HomePageState extends State<HomePage> with WindowListener {
                       ? '# paste a link, press clone.\n# output will stream here.'
                       : _outLines.join('\n'),
                   style: TextStyle(
-                      fontFamily: 'JetBrainsMono',
-                      fontSize: 12.5,
-                      height: 1.55,
-                      color: !hasOutput
-                          ? KColors.textMuted
-                          : KColors.textSecondary),
+                    fontFamily: 'JetBrainsMono',
+                    fontSize: 12.5,
+                    height: 1.55,
+                    color: !hasOutput
+                        ? KColors.textMuted
+                        : KColors.textSecondary,
+                  ),
                 ),
               ),
             ),
@@ -542,20 +585,24 @@ class _HomePageState extends State<HomePage> with WindowListener {
     return Row(
       children: [
         Expanded(
-          child: Text('enter ⏎ runs · esc cancels · close ✕ hides to tray',
-              style: Theme.of(context).textTheme.labelSmall,
-              overflow: TextOverflow.ellipsis),
+          child: Text(
+            'enter ⏎ runs · esc cancels · close ✕ hides to tray',
+            style: Theme.of(context).textTheme.labelSmall,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
         const SizedBox(width: 8),
         TextButton(
           onPressed: _openTarget,
           child: Text(
-              openRepo ? 'open $name folder' : 'open folder',
-              style: TextStyle(
-                  fontFamily: 'JetBrainsMono',
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: KColors.textSecondary)),
+            openRepo ? 'open $name folder' : 'open folder',
+            style: TextStyle(
+              fontFamily: 'JetBrainsMono',
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: KColors.textSecondary,
+            ),
+          ),
         ),
       ],
     );

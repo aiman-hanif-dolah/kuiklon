@@ -3,8 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kuiklon/main.dart';
 
 void main() {
-  testWidgets('idle state shows hint, status and console placeholder',
-      (tester) async {
+  testWidgets('idle state shows hint, status and console placeholder', (
+    tester,
+  ) async {
     await tester.pumpWidget(const KuiklonApp());
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('Kuiklon'), findsOneWidget);
@@ -29,14 +30,18 @@ void main() {
     await tester.tap(find.byType(FilledButton));
     await tester.pump();
     expect(
-        find.textContaining('could not parse a github repo'), findsOneWidget);
+      find.textContaining('could not parse a github repo'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('typing a github url detects the repo name', (tester) async {
     await tester.pumpWidget(const KuiklonApp());
     await tester.pump(const Duration(milliseconds: 200));
     await tester.enterText(
-        find.byType(TextField), 'https://github.com/user/hello-world');
+      find.byType(TextField),
+      'https://github.com/user/hello-world',
+    );
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('hello-world'), findsOneWidget);
     // Either "new repo … ready to clone" or "already exists → ready to
