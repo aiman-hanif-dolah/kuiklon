@@ -1,7 +1,7 @@
 name: kuiklon
 description: "Kuiklon — paste a GitHub repo link, clone it to C:/IdeaProjects in one click."
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.2.0+3
 
 environment:
   sdk: ^3.11.0
@@ -9,7 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  process_run: ^1.2.0
   window_manager: ^0.4.3
   system_tray: ^2.0.3
 

@@ -9,8 +9,13 @@ import 'theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await windowManager.ensureInitialized();
-  await windowManager.setPreventClose(true);
+  try {
+    await windowManager.ensureInitialized();
+    await windowManager.setPreventClose(true);
+  } catch (_) {
+    // Window management is a convenience feature; if the plugin is
+    // unavailable the app should still run as a plain window.
+  }
   const opts = WindowOptions(
     title: 'Kuiklon',
     minimumSize: Size(860, 560),
@@ -52,12 +57,15 @@ class _HomePageState extends State<HomePage> with WindowListener {
   final _urlFocus = FocusNode();
   final _tray = SystemTray();
   final _appWindow = AppWindow();
+  final _consoleScroll = ScrollController();
   AppPhase _phase = AppPhase.idle;
   String _statusLine = '';
-  String _output = '';
   String? _detectedName;
-  bool _manualVisible = false;
+  bool _trayReady = false;
+  final List<String> _outLines = [];
   Timer? _debounce;
+
+  static const int _maxConsoleLines = 400;
 
   @override
   void initState() {
@@ -69,33 +77,41 @@ class _HomePageState extends State<HomePage> with WindowListener {
   }
 
   Future<void> _initTray() async {
-    await _tray.initSystemTray(
-      iconPath: 'assets/kuiklon_tray.ico',
-      toolTip: 'Kuiklon — quick clone',
-    );
-    final menu = Menu()
-      ..buildFrom([
-        MenuItemLabel(
-            label: 'Show Kuiklon', onClicked: (_) => _appWindow.show()),
-        MenuSeparator(),
-        MenuItemLabel(
-            label: 'Open C:/IdeaProjects',
-            onClicked: (_) async =>
-                await Process.run('explorer.exe', [GitService.projectsRoot])),
-        MenuSeparator(),
-        MenuItemLabel(label: 'Quit Kuiklon', onClicked: (_) async {
-          await _tray.destroy();
-          await windowManager.destroy();
-        }),
-      ]);
-    await _tray.setContextMenu(menu);
-    _tray.registerSystemTrayEventHandler((eventName) {
-      if (eventName == kSystemTrayEventClick) {
-        _appWindow.show();
-      } else if (eventName == kSystemTrayEventRightClick) {
-        _tray.popUpContextMenu();
-      }
-    });
+    try {
+      await _tray.initSystemTray(
+        iconPath: 'assets/kuiklon_tray.ico',
+        toolTip: 'Kuiklon — quick clone',
+      );
+      final menu = Menu()
+        ..buildFrom([
+          MenuItemLabel(
+              label: 'Show Kuiklon', onClicked: (_) => _appWindow.show()),
+          MenuSeparator(),
+          MenuItemLabel(
+              label: 'Open C:/IdeaProjects',
+              onClicked: (_) async {
+                GitService.ensureProjectsRoot();
+                await Process.run('explorer.exe', [GitService.projectsRoot]);
+              }),
+          MenuSeparator(),
+          MenuItemLabel(label: 'Quit Kuiklon', onClicked: (_) async {
+            await _tray.destroy();
+            await windowManager.destroy();
+          }),
+        ]);
+      await _tray.setContextMenu(menu);
+      _tray.registerSystemTrayEventHandler((eventName) {
+        if (eventName == kSystemTrayEventClick) {
+          _appWindow.show();
+        } else if (eventName == kSystemTrayEventRightClick) {
+          _tray.popUpContextMenu();
+        }
+      });
+      if (mounted) setState(() => _trayReady = true);
+    } catch (_) {
+      // Tray is a convenience feature; a failure (missing icon resource,
+      // restricted shell) must not take the app down.
+    }
   }
 
   @override
@@ -104,8 +120,14 @@ class _HomePageState extends State<HomePage> with WindowListener {
   }
 
   bool _onKey(KeyEvent e) {
-    if (e is KeyDownEvent &&
-        e.logicalKey == LogicalKeyboardKey.enter &&
+    if (e is! KeyDownEvent) return false;
+    final key = e.logicalKey;
+    if (_phase == AppPhase.busy && key == LogicalKeyboardKey.escape) {
+      GitService.cancelActive();
+      return true;
+    }
+    if ((key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.numpadEnter) &&
         !HardwareKeyboard.instance.isControlPressed &&
         !HardwareKeyboard.instance.isShiftPressed &&
         !HardwareKeyboard.instance.isAltPressed &&
@@ -119,16 +141,56 @@ class _HomePageState extends State<HomePage> with WindowListener {
   void _onUrlChanged() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted || _phase == AppPhase.busy) return;
       setState(() {
         _detectedName = GitService.extractRepoName(_urlCtrl.text);
-        if (_detectedName != null &&
-            GitService.repoExists(_detectedName!)) {
-          _statusLine =
-              'repo already exists → ready to pull / push';
-        } else if (_detectedName != null) {
-          _statusLine = 'new repo detected → ready to clone';
+        if (_detectedName != null) {
+          _statusLineFor(_detectedName!);
+        } else {
+          _statusLine = '';
         }
       });
+    });
+  }
+
+  void _statusLineFor(String name) {
+    _statusLine = GitService.repoExists(name)
+        ? 'repo already exists → ready to pull / push'
+        : 'new repo detected → ready to clone';
+  }
+
+  void _appendLine(String line) {
+    if (!mounted) return;
+    setState(() {
+      _outLines.add(line);
+      if (_outLines.length > _maxConsoleLines) {
+        _outLines.removeRange(0, _outLines.length - _maxConsoleLines);
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_consoleScroll.hasClients) return;
+      final pos = _consoleScroll.position;
+      // Only stick to the bottom when the user is already reading there.
+      if (pos.maxScrollExtent - pos.pixels < 60) {
+        _consoleScroll.jumpTo(pos.maxScrollExtent);
+      }
+    });
+  }
+
+  void _beginBusy(String statusLine) {
+    setState(() {
+      _phase = AppPhase.busy;
+      _outLines.clear();
+      _statusLine = statusLine;
+    });
+  }
+
+  void _finish(GitResult res, {String? statusLine}) {
+    if (!mounted) return;
+    setState(() {
+      _detectedName = GitService.extractRepoName(_urlCtrl.text);
+      _statusLine = statusLine ?? res.message;
+      _phase = res.success ? AppPhase.done : AppPhase.error;
     });
   }
 
@@ -150,49 +212,31 @@ class _HomePageState extends State<HomePage> with WindowListener {
       });
       return;
     }
-    setState(() {
-      _phase = AppPhase.busy;
-      _output = '';
-    });
-
     final exists = GitService.repoExists(name);
-    GitResult res;
+    _beginBusy(exists ? 'syncing $name…' : 'cloning $name…');
+
     if (exists) {
       // Auto flow: pull first, then push local commits.
-      res = await GitService.pull(name);
+      final res = await GitService.pull(name, onLine: _appendLine);
       if (res.success) {
-        setState(() {
-          _statusLine = res.message;
-          _output = res.output;
-        });
         final dirty = await GitService.isDirty(name);
         final ahead = await GitService.isAhead(name);
         if (dirty || ahead) {
-          final pushRes = await GitService.push(name);
-          setState(() {
-            _statusLine = pushRes.success
-                ? 'pulled ✓ → pushed ✓'
-                : 'pulled ✓ → push: ${pushRes.message}';
-            _output += '\n─ push ─\n${pushRes.output}';
-            _phase = pushRes.success ? AppPhase.done : AppPhase.error;
-          });
+          _appendLine('─ push ─');
+          final pushRes = await GitService.push(name, onLine: _appendLine);
+          _finish(pushRes,
+              statusLine: pushRes.success
+                  ? 'pulled ✓ → pushed ✓'
+                  : 'pulled ✓ → push: ${pushRes.message}');
         } else {
-          setState(() => _phase = AppPhase.done);
+          _finish(res);
         }
       } else {
-        setState(() {
-          _statusLine = res.message;
-          _output = res.output;
-          _phase = AppPhase.error;
-        });
+        _finish(res);
       }
     } else {
-      res = await GitService.clone(input);
-      setState(() {
-        _statusLine = res.message;
-        _output = res.output;
-        _phase = res.success ? AppPhase.done : AppPhase.error;
-      });
+      final res = await GitService.clone(input, onLine: _appendLine);
+      _finish(res);
     }
   }
 
@@ -201,38 +245,37 @@ class _HomePageState extends State<HomePage> with WindowListener {
     final name = _detectedName;
     if (name == null) return;
     if (!GitService.repoExists(name)) return;
-    setState(() {
-      _phase = AppPhase.busy;
-      _output = '';
-      _statusLine = 'running git ${op.name}…';
-    });
+    _beginBusy('running git ${op.name}…');
     final res = op == OpType.pull
-        ? await GitService.pull(name)
-        : await GitService.push(name);
-    setState(() {
-      _statusLine = res.message;
-      _output = res.output;
-      _phase = res.success ? AppPhase.done : AppPhase.error;
-    });
+        ? await GitService.pull(name, onLine: _appendLine)
+        : await GitService.push(name, onLine: _appendLine);
+    _finish(res);
+  }
+
+  void _openTarget() {
+    final name = _detectedName;
+    final openRepo = name != null && GitService.repoExists(name);
+    GitService.ensureProjectsRoot();
+    Process.run('explorer.exe',
+        [openRepo ? GitService.repoPath(name) : GitService.projectsRoot]);
   }
 
   @override
   void dispose() {
     windowManager.removeListener(this);
     HardwareKeyboard.instance.removeHandler(_onKey);
+    _urlCtrl.removeListener(_onUrlChanged);
     _urlCtrl.dispose();
     _urlFocus.dispose();
+    _consoleScroll.dispose();
     _debounce?.cancel();
-    _tray.destroy();
+    if (_trayReady) _tray.destroy().catchError((_) {});
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final exists = _detectedName != null && GitService.repoExists(_detectedName!);
-    _manualVisible = _detectedName != null &&
-        exists &&
-        _phase != AppPhase.busy;
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -249,13 +292,13 @@ class _HomePageState extends State<HomePage> with WindowListener {
             children: [
               _header(exists),
               const SizedBox(height: 26),
-              _inputRow(),
+              _inputRow(exists),
               const SizedBox(height: 14),
               _statusStrip(),
               const SizedBox(height: 14),
               Expanded(child: _console()),
               const SizedBox(height: 14),
-              _footer(),
+              _footer(exists),
             ],
           ),
         ),
@@ -267,7 +310,8 @@ class _HomePageState extends State<HomePage> with WindowListener {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Image.asset('assets/kuiklon_logo.png', width: 44, height: 44),
+        Image.asset('assets/kuiklon_logo.png',
+            width: 44, height: 44, semanticLabel: 'Kuiklon logo'),
         const SizedBox(width: 14),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -313,10 +357,8 @@ class _HomePageState extends State<HomePage> with WindowListener {
     );
   }
 
-  Widget _inputRow() {
+  Widget _inputRow(bool exists) {
     final busy = _phase == AppPhase.busy;
-    final exists =
-        _detectedName != null && GitService.repoExists(_detectedName!);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -366,10 +408,23 @@ class _HomePageState extends State<HomePage> with WindowListener {
                     height: 16,
                     child: CircularProgressIndicator(
                         strokeWidth: 2.2, color: Color(0xFF0C0C10)))
-                : const Icon(Icons.download_rounded, size: 18),
-            label: Text(busy ? 'working' : 'clone'),
+                : Icon(
+                    exists ? Icons.sync_rounded : Icons.download_rounded,
+                    size: 18),
+            label: Text(busy ? 'working' : (exists ? 'sync' : 'clone')),
           ),
         ),
+        if (busy) ...[
+          const SizedBox(width: 8),
+          SizedBox(
+            height: 56,
+            child: OutlinedButton.icon(
+              onPressed: GitService.cancelActive,
+              icon: const Icon(Icons.stop_rounded, size: 18),
+              label: const Text('cancel'),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -381,6 +436,9 @@ class _HomePageState extends State<HomePage> with WindowListener {
       AppPhase.done => KColors.lime,
       AppPhase.error => KColors.red,
     };
+    final canManual = _detectedName != null &&
+        GitService.repoExists(_detectedName!) &&
+        _phase != AppPhase.busy;
     return Row(
       children: [
         Container(
@@ -401,7 +459,7 @@ class _HomePageState extends State<HomePage> with WindowListener {
             overflow: TextOverflow.ellipsis,
           ),
         ),
-        if (_manualVisible) ...[
+        if (canManual) ...[
           const SizedBox(width: 10),
           OutlinedButton.icon(
               onPressed: () => _manual(OpType.pull),
@@ -418,6 +476,7 @@ class _HomePageState extends State<HomePage> with WindowListener {
   }
 
   Widget _console() {
+    final hasOutput = _outLines.isNotEmpty;
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -445,7 +504,7 @@ class _HomePageState extends State<HomePage> with WindowListener {
                         .labelSmall
                         ?.copyWith(letterSpacing: 2)),
                 const Spacer(),
-                Text('kuiklon v1.0',
+                Text('kuiklon v1.2',
                     style: Theme.of(context).textTheme.labelSmall),
               ],
             ),
@@ -456,15 +515,16 @@ class _HomePageState extends State<HomePage> with WindowListener {
               width: double.infinity,
               padding: const EdgeInsets.all(16),
               child: SingleChildScrollView(
+                controller: _consoleScroll,
                 child: Text(
-                  _output.isEmpty
+                  !hasOutput
                       ? '# paste a link, press clone.\n# output will stream here.'
-                      : _output,
+                      : _outLines.join('\n'),
                   style: TextStyle(
                       fontFamily: 'JetBrainsMono',
                       fontSize: 12.5,
                       height: 1.55,
-                      color: _output.isEmpty
+                      color: !hasOutput
                           ? KColors.textMuted
                           : KColors.textSecondary),
                 ),
@@ -476,17 +536,21 @@ class _HomePageState extends State<HomePage> with WindowListener {
     );
   }
 
-  Widget _footer() {
+  Widget _footer(bool exists) {
+    final name = _detectedName;
+    final openRepo = exists && name != null;
     return Row(
       children: [
-        Text('enter ⏎ runs · close ✕ hides to tray',
-            style: Theme.of(context).textTheme.labelSmall),
-        const Spacer(),
+        Expanded(
+          child: Text('enter ⏎ runs · esc cancels · close ✕ hides to tray',
+              style: Theme.of(context).textTheme.labelSmall,
+              overflow: TextOverflow.ellipsis),
+        ),
+        const SizedBox(width: 8),
         TextButton(
-          onPressed: () async {
-            await Process.run('explorer.exe', [GitService.projectsRoot]);
-          },
-          child: Text('open folder',
+          onPressed: _openTarget,
+          child: Text(
+              openRepo ? 'open $name folder' : 'open folder',
               style: TextStyle(
                   fontFamily: 'JetBrainsMono',
                   fontSize: 11.5,
