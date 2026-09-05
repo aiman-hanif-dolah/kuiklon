@@ -36,6 +36,35 @@ flutter test
 
 Unit tests cover repo-name parsing (including deep links and unsafe-name rejection) and exercise real clone/pull/push round trips against local bare-repo fixtures in a temp directory — nothing touches your `C:\IdeaProjects`.
 
+Integration tests drive the real app on the real Windows desktop target:
+
+```powershell
+flutter test integration_test -d windows
+```
+
+## Distributable installer
+
+Builds a single-file Inno Setup installer with Start Menu / Desktop shortcuts
+and an opt-in "start with Windows" task:
+
+```powershell
+flutter build windows --release
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\make_installer.ps1
+```
+
+Output: `build\installer\kuiklon-setup-<version>.exe` (version is read from
+`pubspec.yaml`). Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php).
+
+Silent install for deployment:
+
+```powershell
+build\installer\kuiklon-setup-1.2.0+3.exe /SILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
+The installer installs per-user (no admin) into `%LOCALAPPDATA%\Programs\Kuiklon`
+and registers an uninstaller in Apps & Features. For a quick developer-machine
+install without the installer, use `tools\install.ps1`.
+
 ## How it works
 
 - Repos are cloned into `C:\IdeaProjects\<repo-name>` (created automatically if missing).
