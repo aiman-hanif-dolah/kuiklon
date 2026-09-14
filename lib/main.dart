@@ -5,10 +5,14 @@ import 'package:flutter/services.dart';
 import 'package:system_tray/system_tray.dart';
 import 'package:window_manager/window_manager.dart';
 import 'git_service.dart';
+import 'settings_service.dart';
 import 'theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Apply the persisted clone location (if any) before the UI is built.
+  final savedRoot = SettingsService.readProjectsRoot();
+  if (savedRoot != null) GitService.projectsRoot = savedRoot;
   try {
     await windowManager.ensureInitialized();
     await windowManager.setPreventClose(true);
@@ -96,7 +100,7 @@ class _HomePageState extends State<HomePage> with WindowListener {
           ),
           MenuSeparator(),
           MenuItemLabel(
-            label: 'Open C:/IdeaProjects',
+            label: 'Open projects folder',
             onClicked: (_) async {
               GitService.ensureProjectsRoot();
               await Process.run('explorer.exe', [GitService.projectsRoot]);
@@ -275,6 +279,35 @@ class _HomePageState extends State<HomePage> with WindowListener {
     ]);
   }
 
+  void _copyTarget() {
+    final name = _detectedName;
+    final openRepo = name != null && GitService.repoExists(name);
+    GitService.ensureProjectsRoot();
+    final path = openRepo ? GitService.repoPath(name) : GitService.projectsRoot;
+    Clipboard.setData(ClipboardData(text: path));
+    setState(() {
+      _statusLine = 'copied: $path';
+    });
+  }
+
+  String _displayRoot() => GitService.projectsRoot.replaceAll('\\', '/');
+
+  Future<void> _changeRoot() async {
+    if (_phase == AppPhase.busy) return;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => const _RootDialog(),
+    );
+    if (saved != true || !mounted) return;
+    setState(() {
+      // Re-evaluate detection against the new location.
+      _detectedName = GitService.extractRepoName(_urlCtrl.text);
+      if (_detectedName != null) {
+        _statusLineFor(_detectedName!);
+      }
+    });
+  }
+
   @override
   void dispose() {
     windowManager.removeListener(this);
@@ -353,14 +386,21 @@ class _HomePageState extends State<HomePage> with WindowListener {
           ],
         ),
         const Spacer(),
-        _tag('C:/IdeaProjects', warm: true),
+        Tooltip(
+          message: 'Change clone location',
+          child: InkWell(
+            onTap: _changeRoot,
+            borderRadius: BorderRadius.circular(6),
+            child: _tag(_displayRoot(), warm: true, maxWidth: 240),
+          ),
+        ),
         const SizedBox(width: 8),
         _tag(exists ? 'repo exists' : 'ready', warm: exists),
       ],
     );
   }
 
-  Widget _tag(String text, {bool warm = false}) {
+  Widget _tag(String text, {bool warm = false, double? maxWidth}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
@@ -370,14 +410,19 @@ class _HomePageState extends State<HomePage> with WindowListener {
         border: Border.all(color: warm ? KColors.warmDeep : KColors.inkBorder),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontFamily: 'JetBrainsMono',
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.6,
-          color: warm ? KColors.warm : KColors.textSecondary,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth ?? double.infinity),
+        child: Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontFamily: 'JetBrainsMono',
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.6,
+            color: warm ? KColors.warm : KColors.textSecondary,
+          ),
         ),
       ),
     );
@@ -545,7 +590,7 @@ class _HomePageState extends State<HomePage> with WindowListener {
                 ),
                 const Spacer(),
                 Text(
-                  'kuiklon v1.2',
+                  'kuiklon v1.3',
                   style: Theme.of(context).textTheme.labelSmall,
                 ),
               ],
@@ -592,9 +637,24 @@ class _HomePageState extends State<HomePage> with WindowListener {
           ),
         ),
         const SizedBox(width: 8),
-        TextButton(
+        TextButton.icon(
+          onPressed: _copyTarget,
+          icon: const Icon(Icons.copy_rounded, size: 13),
+          label: Text(
+            openRepo ? 'copy path' : 'copy root',
+            style: TextStyle(
+              fontFamily: 'JetBrainsMono',
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: KColors.textSecondary,
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        TextButton.icon(
           onPressed: _openTarget,
-          child: Text(
+          icon: const Icon(Icons.folder_open_rounded, size: 14),
+          label: Text(
             openRepo ? 'open $name folder' : 'open folder',
             style: TextStyle(
               fontFamily: 'JetBrainsMono',
@@ -604,6 +664,92 @@ class _HomePageState extends State<HomePage> with WindowListener {
             ),
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _RootDialog extends StatefulWidget {
+  const _RootDialog();
+
+  @override
+  State<_RootDialog> createState() => _RootDialogState();
+}
+
+class _RootDialogState extends State<_RootDialog> {
+  late final TextEditingController _pathCtrl;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _pathCtrl = TextEditingController(text: GitService.projectsRoot);
+  }
+
+  @override
+  void dispose() {
+    _pathCtrl.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final error = SettingsService.validateProjectsRoot(_pathCtrl.text);
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    final path = SettingsService.normalizePath(_pathCtrl.text);
+    try {
+      Directory(path).createSync(recursive: true);
+    } on FileSystemException catch (e) {
+      setState(() => _error = 'could not create that folder: ${e.message}');
+      return;
+    }
+    SettingsService.writeProjectsRoot(path);
+    GitService.projectsRoot = path;
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Change clone location'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _pathCtrl,
+            autofocus: true,
+            onSubmitted: (_) => _save(),
+            style: const TextStyle(fontFamily: 'JetBrainsMono', fontSize: 14),
+            decoration: InputDecoration(
+              labelText: 'Clone folder',
+              errorText: _error,
+              prefixIcon: const Padding(
+                padding: EdgeInsets.only(left: 14, right: 10),
+                child: Icon(
+                  Icons.folder_open,
+                  size: 20,
+                  color: KColors.textMuted,
+                ),
+              ),
+              prefixIconConstraints: const BoxConstraints(minWidth: 0),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'New clones land here. Repos already cloned stay where they are.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('cancel'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('save location')),
       ],
     );
   }

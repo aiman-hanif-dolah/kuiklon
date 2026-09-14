@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:kuiklon/git_service.dart';
 import 'package:kuiklon/main.dart';
+import 'package:kuiklon/settings_service.dart';
 
 /// Runs the real app on the real Windows desktop target and drives the
 /// primary user flows end-to-end: paste URL → clone, and paste URL of an
@@ -126,5 +127,43 @@ void main() {
     );
     expect(find.text('push'), findsOneWidget);
     expect(GitService.repoExists('origin'), isTrue);
+  });
+
+  testWidgets('clone location can be changed and persists', (tester) async {
+    await tester.pumpWidget(const KuiklonApp());
+    await tester.pump(const Duration(seconds: 1));
+
+    // Open the change-location dialog from the header tag.
+    final rootLabel = GitService.projectsRoot.replaceAll('\\', '/');
+    await tester.tap(find.text(rootLabel));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Change clone location'), findsOneWidget);
+
+    final newRoot = '${tmp.path}/elsewhere';
+    final dialogField = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(dialogField, newRoot);
+    await tester.tap(find.text('save location'));
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.text('Change clone location'), findsNothing);
+    expect(GitService.projectsRoot, newRoot);
+    expect(Directory(newRoot).existsSync(), isTrue);
+    expect(SettingsService.readProjectsRoot(), newRoot);
+
+    // New clones land in the changed location.
+    await tester.enterText(find.byType(TextField), '${tmp.path}/origin.git');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.byType(FilledButton));
+
+    var cloned = false;
+    for (var i = 0; i < 120 && !cloned; i++) {
+      await tester.pump(const Duration(milliseconds: 250));
+      cloned = find.textContaining('Cloned successfully').evaluate().isNotEmpty;
+    }
+    expect(cloned, isTrue, reason: 'clone after relocation never finished');
+    expect(Directory('$newRoot/origin').existsSync(), isTrue);
   });
 }
